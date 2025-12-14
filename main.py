@@ -12,6 +12,8 @@ import speech_recognition as sr
 from openai.helpers import LocalAudioPlayer
 from openai import AsyncOpenAI
 
+from tools import run_command
+
 load_dotenv()
 
 client = OpenAI()
@@ -28,29 +30,13 @@ async def tts(speech: str):
         await LocalAudioPlayer().play(response)
 
 
-def run_command(cmd: str):
-    result = os.system(cmd)
-    return result
 
-
-
-def get_weather(city: str):
-    url = f"https://wttr.in/{city.lower()}?format=%C+%t"
-    response = requests.get(url)
-
-    if response.status_code == 200:
-        return f"The weather in {city} is {response.text}"
-    
-    return "Something went wrong"
-
-available_tools = {
-    "get_weather": get_weather,
-    "run_command": run_command
-}
 
 
 SYSTEM_PROMPT = """
     You're an expert AI Assistant in resolving user queries using chain of thought.
+    You're running locally to help humans interact faster with the Operating System. Assume you are 
+    working on a PopOS operating system.
     You work on START, PLAN and OUPUT steps.
     You need to first PLAN what needs to be done. The PLAN can be multiple steps.
     Once you think enough PLAN has been done, finally you can give an OUTPUT.
@@ -66,20 +52,13 @@ SYSTEM_PROMPT = """
     { "step": "START" | "PLAN" | "OUTPUT" | "TOOL", "content": "string", "tool": "string", "input": "string" }
 
     Available Tools:
-    - get_weather(city: str): Takes city name as an input string and returns the weather info about the city.
     - run_command(cmd: str): Takes a system linux command as string and executes the command on user's system and returns the output from that command
     
     Example 1:
-    START: Hey, Can you solve 2 + 3 * 5 / 10
-    PLAN: { "step": "PLAN": "content": "Seems like user is interested in math problem" }
-    PLAN: { "step": "PLAN": "content": "looking at the problem, we should solve this using BODMAS method" }
-    PLAN: { "step": "PLAN": "content": "Yes, The BODMAS is correct thing to be done here" }
-    PLAN: { "step": "PLAN": "content": "first we must multiply 3 * 5 which is 15" }
-    PLAN: { "step": "PLAN": "content": "Now the new equation is 2 + 15 / 10" }
-    PLAN: { "step": "PLAN": "content": "We must perform divide that is 15 / 10  = 1.5" }
-    PLAN: { "step": "PLAN": "content": "Now the new equation is 2 + 1.5" }
-    PLAN: { "step": "PLAN": "content": "Now finally lets perform the add 3.5" }
-    PLAN: { "step": "PLAN": "content": "Great, we have solved and finally left with 3.5 as ans" }
+    START: Hey, can you open VS Code and initialize a new project named noah in codes directory
+    PLAN: { "step": "PLAN": "content": "Seems like user is interested in creating a new project named noah in codes directory" }
+    PLAN: { "step": "PLAN": "content": "looking at the problem, we can solve this simply through terminal code execution" }
+    PLAN: { "step": "PLAN": "content": "" }
     OUTPUT: { "step": "OUTPUT": "content": "3.5" }
 
     Example 2:
@@ -150,6 +129,7 @@ with sr.Microphone() as source: # Mic Access
 
             if parsed_result.step == "PLAN":
                 print("🧠", parsed_result.content)
+                asyncio.run(tts(speech=parsed_result.content))
                 continue
 
             if parsed_result.step == "OUTPUT":
