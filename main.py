@@ -1,17 +1,18 @@
 # Chain Of Thought Prompting
 from dotenv import load_dotenv
-from openai import OpenAI
-import requests
-from pydantic import BaseModel, Field
-from typing import Optional
+from openai import OpenAI, AsyncOpenAI
+
+
+from openai.helpers import LocalAudioPlayer
+import speech_recognition as sr
+
+
 import json
-import os
 
 import asyncio
-import speech_recognition as sr
-from openai.helpers import LocalAudioPlayer
-from openai import AsyncOpenAI
 
+from prompts import SYSTEM_PROMPT
+from schemas import ModelOutputFormat
 from tools import run_command
 
 load_dotenv()
@@ -22,7 +23,7 @@ async_client = AsyncOpenAI()
 async def tts(speech: str):
     async with async_client.audio.speech.with_streaming_response.create(
         model="gpt-4o-mini-tts",
-        voice="coral",
+        voice="nova",
         instructions="Always speak in cheerfull manner with full of delight and happy",
         input=speech,
         response_format="pcm",
@@ -32,53 +33,10 @@ async def tts(speech: str):
 
 
 
+available_tools = {
+    "run_command": run_command
+}
 
-SYSTEM_PROMPT = """
-    You're an expert AI Assistant in resolving user queries using chain of thought.
-    You're running locally to help humans interact faster with the Operating System. Assume you are 
-    working on a PopOS operating system.
-    You work on START, PLAN and OUPUT steps.
-    You need to first PLAN what needs to be done. The PLAN can be multiple steps.
-    Once you think enough PLAN has been done, finally you can give an OUTPUT.
-    You can also call a tool if required from the list of available tools.
-    for every tool call wait for the observe step which is the output from the called tool.
-
-    Rules:
-    - Strictly Follow the given JSON output format
-    - Only run one step at a time.
-    - The sequence of steps is START (where user gives an input), PLAN (That can be multiple times) and finally OUTPUT (which is going to the displayed to the user).
-
-    Output JSON Format:
-    { "step": "START" | "PLAN" | "OUTPUT" | "TOOL", "content": "string", "tool": "string", "input": "string" }
-
-    Available Tools:
-    - run_command(cmd: str): Takes a system linux command as string and executes the command on user's system and returns the output from that command
-    
-    Example 1:
-    START: Hey, can you open VS Code and initialize a new project named noah in codes directory
-    PLAN: { "step": "PLAN": "content": "Seems like user is interested in creating a new project named noah in codes directory" }
-    PLAN: { "step": "PLAN": "content": "looking at the problem, we can solve this simply through terminal code execution" }
-    PLAN: { "step": "PLAN": "content": "" }
-    OUTPUT: { "step": "OUTPUT": "content": "3.5" }
-
-    Example 2:
-    START: What is the weather of Delhi?
-    PLAN: { "step": "PLAN": "content": "Seems like user is interested in getting weather of Delhi in India" }
-    PLAN: { "step": "PLAN": "content": "Lets see if we have any available tool from the list of available tools" }
-    PLAN: { "step": "PLAN": "content": "Great, we have get_weather tool available for this query." }
-    PLAN: { "step": "PLAN": "content": "I need to call get_weather tool for delhi as input for city" }
-    PLAN: { "step": "TOOL": "tool": "get_weather", "input": "delhi" }
-    PLAN: { "step": "OBSERVE": "tool": "get_weather", "output": "The temp of delhi is cloudy with 20 C" }
-    PLAN: { "step": "PLAN": "content": "Great, I got the weather info about delhi" }
-    OUTPUT: { "step": "OUTPUT": "content": "The cuurent weather in delhi is 20 C with some cloudy sky." }
-    
-"""
-
-class MyOutputFormat(BaseModel):
-    step: str = Field(..., description="The ID of the step. Example: PLAN, OUTPUT, TOOL, etc")
-    content: Optional[str] = Field(None, description="The optional string content for the step")
-    tool: Optional[str] = Field(None, description="The ID of the tool to call.")
-    input: Optional[str] = Field(None, description="The input params for the tool")
 
 message_history = [
     { "role": "system", "content": SYSTEM_PROMPT },
@@ -100,7 +58,7 @@ with sr.Microphone() as source: # Mic Access
         while True:
             response = client.chat.completions.parse(
                 model="gpt-4.1",
-                response_format=MyOutputFormat,
+                response_format=ModelOutputFormat,
                 messages=message_history
             )
 
