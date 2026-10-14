@@ -13,7 +13,7 @@ from noah.session import Noah
 from noah.speech import Speaker
 from noah.tasks.models import Task
 from noah.tools.checklist import CHECKLIST_TOOLS
-from noah.tools.safety import Confirm
+from noah.tools.safety import CannotAsk, Confirm
 
 Write = Callable[[str], None]
 
@@ -30,13 +30,13 @@ def write_stdout(text: str) -> None:
 def terminal_confirm(
     read_line: Callable[[str], str] = input, interactive: bool | None = None
 ) -> Confirm:
-    """Ask y/n in the terminal. With no terminal to ask in (piped input), always decline."""
+    """Ask y/n in the terminal. With no terminal to ask in (piped input), raise `CannotAsk`."""
     if interactive is None:
         interactive = sys.stdin.isatty()
 
     async def confirm(action: str) -> bool:
         if not interactive:
-            return False
+            raise CannotAsk
         question = typer.style(f"  Allow Noah to {action}? [y/N] ", fg="yellow")
         try:
             answer = await asyncio.to_thread(read_line, question)

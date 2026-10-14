@@ -2,12 +2,15 @@ import dataclasses
 import re
 from pathlib import Path
 
+import pytest
+
 from noah.agent.llm import LLMError
 from noah.agent.loop import Agent
 from noah.chat import Renderer, repl, run_turn, terminal_confirm, unfinished_summary
 from noah.config import load_settings
 from noah.session import Noah, start
 from noah.tools.registry import ToolRegistry
+from noah.tools.safety import CannotAsk
 
 from .fakes import FakeLLM, FakeTools, call, text
 
@@ -92,7 +95,11 @@ async def test_terminal_confirm_accepts_yes_only():
     assert await terminal_confirm(lambda _: "y", interactive=True)("run `x`")
     assert await terminal_confirm(lambda _: " YES ", interactive=True)("run `x`")
     assert not await terminal_confirm(lambda _: "", interactive=True)("run `x`")
-    assert not await terminal_confirm(lambda _: "y", interactive=False)("run `x`")
+
+
+async def test_terminal_confirm_without_a_terminal_cannot_ask():
+    with pytest.raises(CannotAsk):
+        await terminal_confirm(lambda _: "y", interactive=False)("run `x`")
 
 
 PLAN = '{"title": "Set up demo", "items": ["Make the folder", "Init git"]}'
@@ -140,3 +147,21 @@ async def test_checklist_turn_announces_progress_and_hides_checklist_calls(tmp_p
 
 async def test_unfinished_summary():
     assert unfinished_summary([]) is None
+
+
+async def test_only_recent_checklists_raise_the_step_limit(tmp_path: Path):
+    from datetime import timedelta
+
+    out = _Out()
+    noah = await _noah(tmp_path, FakeLLM(), Renderer(out))
+    limit = noah.agent.max_steps
+    assert callable(limit)
+    assert limit() == 8
+    now = noah.tasks.clock()
+    noah.tasks.clock = lambda: now - timedelta(hours=13)
+    await noah.tasks.create("Old", ["a"])
+    noah.tasks.clock = lambda: now
+    assert limit() == 8
+    await noah.tasks.create("New", ["b"])
+    assert limit() == 40
+    await noah.close()

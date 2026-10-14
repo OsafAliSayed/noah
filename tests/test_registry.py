@@ -173,6 +173,9 @@ async def test_long_results_are_truncated(tmp_path: Path):
     assert len(result) < 4100
 
 
-async def test_confirm_defaults_to_decline():
-    registry = ToolRegistry([delete])
-    assert (await registry.execute("delete", '{"path": "x"}')).startswith("The user declined")
+async def test_confirm_without_a_way_to_ask_is_not_a_decline(tmp_path: Path):
+    registry = ToolRegistry([delete], audit=AuditLog(tmp_path / "a.log"))
+    result = await registry.execute("delete", '{"path": "x"}')
+    assert result.startswith("Not run: this action needs the user's OK")
+    entry = json.loads((tmp_path / "a.log").read_text())
+    assert entry["decision"] == "unconfirmed"

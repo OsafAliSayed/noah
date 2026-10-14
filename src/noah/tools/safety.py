@@ -17,6 +17,11 @@ Risk = Literal["safe", "confirm", "deny"]
 Confirm = Callable[[str], Awaitable[bool]]
 
 
+class CannotAsk(Exception):
+    """Raised by a `Confirm` callback when there's no way to ask the user (e.g. piped input),
+    so the action is skipped without being reported as the user saying no."""
+
+
 @dataclass(frozen=True)
 class Assessment:
     risk: Risk

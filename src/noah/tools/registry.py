@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
 from noah.agent.llm import ToolSchema
-from noah.tools.safety import Assessment, AuditLog, Confirm, Risk
+from noah.tools.safety import Assessment, AuditLog, CannotAsk, Confirm, Risk
 
 Args = dict[str, Any]
 RiskFn = Callable[[Args], Assessment]
@@ -108,8 +108,8 @@ def _strip_titles(schema: Any) -> Any:
     return schema
 
 
-async def _decline(_: str) -> bool:
-    return False
+async def _cannot_ask(_: str) -> bool:
+    raise CannotAsk
 
 
 class ToolRegistry:
@@ -118,7 +118,7 @@ class ToolRegistry:
     def __init__(
         self,
         tools: Iterable[Tool],
-        confirm: Confirm = _decline,
+        confirm: Confirm = _cannot_ask,
         audit: AuditLog | None = None,
     ) -> None:
         self.tools = {t.name: t for t in tools}
@@ -146,10 +146,21 @@ class ToolRegistry:
             result = f"Refused: {assessment.reason or 'this action is not allowed.'}"
             self._record(tool, args, assessment, "refused", result)
             return result
-        if assessment.risk == "confirm" and not await self.confirm(tool.summary(args)):
-            result = "The user declined this action. Don't retry it unless they ask again."
-            self._record(tool, args, assessment, "declined", result)
-            return result
+        if assessment.risk == "confirm":
+            try:
+                allowed = await self.confirm(tool.summary(args))
+            except CannotAsk:
+                result = (
+                    "Not run: this action needs the user's OK and there's no way to ask them "
+                    "right now. Tell them what you would have done so they can run it from "
+                    "`noah chat` or by voice."
+                )
+                self._record(tool, args, assessment, "unconfirmed", result)
+                return result
+            if not allowed:
+                result = "The user declined this action. Don't retry it unless they ask again."
+                self._record(tool, args, assessment, "declined", result)
+                return result
 
         try:
             result = await tool.invoke(args)

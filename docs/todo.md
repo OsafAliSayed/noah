@@ -68,19 +68,19 @@ Not spelled out in `architecture.md`:
 | Whisper `small.en`, GPU | 0.47 s per command | 200–400 ms |
 | Whisper `base.en`, CPU | 0.55 s per command | 600–900 ms |
 | RAM, everything loaded (GPU profile) | about 1,010 MB | under 1 GB (the 1.5 GB machine budget is fine) |
-| Idle CPU, wake word only | about 5.6–6% of one core | under 5% |
+| Idle CPU, wake word only | about 5.6–6% of one core before the silence gate; the model itself is 3.5% and now rests in a quiet room | under 5% |
 | LLM first token (Haiku 5.5) | about 1.6–1.8 s | 0.3–0.7 s |
 
 The first LLM token is now the biggest part of the latency. Try `reasoning_effort = "minimal"`, or a faster model once M4 finishes.
 
 ## Known issues and follow-ups
 
-- [ ] **Idle CPU is slightly over target.** openWakeWord's feature model costs about 5%. Options: a lighter wake word engine (Porcupine), or skipping frames that are pure silence (the VAD costs less than the wake word).
+- [x] **Idle CPU was slightly over target.** The wake word model (3.5% of a core) now rests while the mic is below `wakeword_gate_dbfs` (-50), and replays the last 2 s when sound returns. A synthetic "Hey Jarvis" after 5 s of quiet fires at the same moment with the gate on. **You:** re-measure idle CPU with the real mic; if a quiet "Hey Jarvis" gets missed, lower the gate (`noah run -v` logs the level).
 - [ ] **Whisper mangles names like "test-noah"** ("testnoincodes"). The initial prompt helps a little. Consider adding folder names from `~/codes` to the prompt.
 - [ ] **The screenshot tool saved a nearly empty image** in testing. The screen was probably locked or off, but it hasn't been checked while you're at the desk.
-- [ ] **Declining without a terminal reads as the user saying no** in `noah say` with piped input. The registry can't tell "couldn't ask" from "said no".
+- [x] **Declining without a terminal read as the user saying no.** A `Confirm` callback now raises `CannotAsk`, and the registry tells the model (and the audit log, `"unconfirmed"`) that it couldn't ask. Checked live with piped `noah say`.
 - [ ] **No echo cancellation.** If you use speakers rather than headphones, consider PipeWire's `echo-cancel` module before turning on VAD-based barge-in.
-- [ ] **Abandoned checklists stay open**, and that raises the step limit for every request. Ask "cancel the old checklists", or add an expiry.
+- [x] **Abandoned checklists raised the step limit for every request.** Only checklists touched in the last `checklist_active_hours` (12) count now. Old ones stay listed until you cancel them.
 - [ ] **Preamble before tool calls.** The prompt now says not to announce tool calls. Check how often models still do it out loud.
 - [ ] **No `platform/` layer.** Tools call Linux commands directly. Add it only when a second OS is targeted.
 - [ ] **The architecture diagrams page** (https://claude.ai/artifact/RScKGkpPUc6rnBrfwf49ZN) predates the voice pipeline.

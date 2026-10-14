@@ -129,9 +129,10 @@ class TaskManager:
             if item is None:
                 return await confirm(action)
             await self.update_item(item.task_id, item.number, "waiting", action, asking=True)
-            answer = await confirm(action)
-            await self.update_item(item.task_id, item.number, "in_progress")
-            return answer
+            try:
+                return await confirm(action)
+            finally:
+                await self.update_item(item.task_id, item.number, "in_progress")
 
         return ask
 

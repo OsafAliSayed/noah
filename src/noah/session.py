@@ -6,6 +6,7 @@ they confirm actions and where announcements go.
 
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 
 from noah.agent.llm import LLM, OpenRouterLLM
 from noah.agent.loop import Agent
@@ -107,8 +108,9 @@ async def start(
         return "\n".join(render_task(t) for t in tasks.open_tasks())
 
     def step_limit() -> int:
-        has_open = bool(tasks.open_tasks())
-        return settings.llm.max_steps_with_checklist if has_open else settings.llm.max_steps
+        cutoff = tasks.clock() - timedelta(hours=settings.llm.checklist_active_hours)
+        active = any(t.updated_at >= cutoff for t in tasks.open_tasks())
+        return settings.llm.max_steps_with_checklist if active else settings.llm.max_steps
 
     agent = Agent(
         llm=llm,

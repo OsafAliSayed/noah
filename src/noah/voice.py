@@ -95,7 +95,11 @@ async def run_voice(settings: Settings, mode: str | None = None, output: Output 
     wake = None
     if mode == "wake":
         try:
-            wake = WakeWord(settings.voice.wakeword_model, settings.voice.wakeword_threshold)
+            wake = WakeWord(
+                settings.voice.wakeword_model,
+                settings.voice.wakeword_threshold,
+                settings.voice.wakeword_gate_dbfs,
+            )
         except Exception as e:
             output(f"The wake word didn't load ({e}); use the hotkey instead.")
 

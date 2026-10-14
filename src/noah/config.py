@@ -40,6 +40,8 @@ class LLMSettings(_Section):
     max_steps: int = Field(default=8, ge=1)
     # A checklist needs two update_item calls per step on top of the work itself.
     max_steps_with_checklist: int = Field(default=40, ge=1)
+    # Checklists untouched for this long no longer raise the step limit (they stay listed).
+    checklist_active_hours: float = Field(default=12, gt=0)
 
 
 class TasksSettings(_Section):
@@ -60,6 +62,8 @@ class VoiceSettings(_Section):
     # A built-in openWakeWord model (hey_jarvis, hey_mycroft, alexa) or a path to a .onnx file.
     wakeword_model: str = "hey_jarvis"
     wakeword_threshold: float = Field(default=0.5, gt=0, lt=1)
+    # Skip the wake word model while the mic is quieter than this (saves CPU). None: never skip.
+    wakeword_gate_dbfs: float | None = Field(default=-50, lt=0)
     mic_device: str | None = None
     vad_threshold: float = Field(default=0.5, gt=0, lt=1)
     silence_ms: int = Field(default=700, ge=200)

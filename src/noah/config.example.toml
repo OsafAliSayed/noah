@@ -17,6 +17,8 @@ max_tokens = 2048
 # Model calls per request: a plain request, and one with a checklist (two updates per step).
 max_steps = 8
 max_steps_with_checklist = 40
+# A checklist untouched for this many hours no longer raises the step limit.
+checklist_active_hours = 12
 
 [tasks]
 # How much Noah says about checklist progress: "quiet", "normal" or "chatty".
@@ -39,6 +41,10 @@ ptt_key = "ctrl_r"
 wakeword_model = "hey_jarvis"
 # Higher means fewer false wake-ups but more missed ones.
 wakeword_threshold = 0.5
+# Below this mic level (dBFS) the wake word model rests to save CPU. If Noah misses a quiet
+# "Hey Jarvis", lower it (e.g. -60); -120 keeps the model always on. `noah run -v` logs the
+# level each time the model rests or wakes.
+wakeword_gate_dbfs = -50
 # A PortAudio device name or number; unset uses the system default input.
 # mic_device = "pulse"
 vad_threshold = 0.5
