@@ -1,7 +1,14 @@
-# virtual environments
-.venv
-.env
-
-
-# Ignore pycache files
+# Python
 __pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+
+# Secrets
+.env
