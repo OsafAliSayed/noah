@@ -26,8 +26,17 @@ class _Section(BaseModel):
 
 class LLMSettings(_Section):
     base_url: str = "https://openrouter.ai/api/v1"
-    # Placeholder until M4 picks a default by benchmark. OpenRouter's auto router picks per request.
-    model: str = "openrouter/auto"
+    # Provisional pick from a partial M4 benchmark (see docs/model-eval.md): every single-step
+    # command right and the fastest first token. Re-run scripts/eval_models.py to confirm.
+    model: str = "anthropic/claude-haiku-5.5"
+    # Tried in order by OpenRouter if the main model is down or rate limited.
+    fallback_models: list[str] = ["deepseek/deepseek-v4.1-flash"]
+    # "minimal", "low", "medium" or "high" for models that reason; unset uses the model's default.
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    # Don't let OpenRouter's providers store or train on prompts.
+    deny_data_collection: bool = True
+    # Spoken replies are short. A cap also stops OpenRouter reserving credit for 65k tokens.
+    max_tokens: int = Field(default=2048, ge=64)
     max_steps: int = Field(default=8, ge=1)
     # A checklist needs two update_item calls per step on top of the work itself.
     max_steps_with_checklist: int = Field(default=40, ge=1)
@@ -38,9 +47,47 @@ class TasksSettings(_Section):
     notifications: bool = True
 
 
+class SpeechSettings(_Section):
+    # A Piper voice name; see https://huggingface.co/rhasspy/piper-voices
+    voice: str = "en_US-lessac-medium"
+    speed: float = Field(default=1.0, gt=0.3, lt=3.0)
+
+
+class VoiceSettings(_Section):
+    # wake: say the wake word. ptt: hold ptt_key to talk. The hotkey also works in wake mode.
+    mode: Literal["wake", "ptt"] = "wake"
+    ptt_key: str = "ctrl_r"
+    # A built-in openWakeWord model (hey_jarvis, hey_mycroft, alexa) or a path to a .onnx file.
+    wakeword_model: str = "hey_jarvis"
+    wakeword_threshold: float = Field(default=0.5, gt=0, lt=1)
+    mic_device: str | None = None
+    vad_threshold: float = Field(default=0.5, gt=0, lt=1)
+    silence_ms: int = Field(default=700, ge=200)
+    # After Noah answers, listen this long for a follow-up without the wake word. 0 turns it off.
+    follow_up_seconds: float = Field(default=5.0, ge=0)
+    # Forget the conversation after this much quiet. Checklists are kept.
+    session_timeout_seconds: int = Field(default=120, ge=10)
+    chime: bool = True
+    # The wake word or hotkey while Noah is talking stops it and listens.
+    barge_in: bool = True
+
+
+class STTSettings(_Section):
+    # auto: GPU model on the charger, CPU model on battery.
+    profile: Literal["auto", "gpu", "cpu"] = "auto"
+    # Measured on the GTX 1650 (no tensor cores): small.en takes about 0.47 s per command;
+    # large-v3-turbo takes 1.8 s or more. On the CPU, base.en takes about 0.55 s, small.en 1.5 s.
+    gpu_model: str = "small.en"
+    cpu_model: str = "base.en"
+    cpu_threads: int = Field(default=6, ge=1)
+
+
 class Settings(_Section):
     llm: LLMSettings = LLMSettings()
     tasks: TasksSettings = TasksSettings()
+    speech: SpeechSettings = SpeechSettings()
+    voice: VoiceSettings = VoiceSettings()
+    stt: STTSettings = STTSettings()
     data_dir: Path
     state_dir: Path
     openrouter_api_key: SecretStr | None = None

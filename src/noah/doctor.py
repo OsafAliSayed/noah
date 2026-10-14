@@ -98,7 +98,7 @@ def check_portaudio(find_library: Callable[[str], str | None] = ctypes.util.find
     return Check(
         "PortAudio",
         "warn",
-        "missing, needed for voice (M5+)",
+        "missing, needed for voice",
         "sudo apt install portaudio19-dev",
     )
 
@@ -143,6 +143,42 @@ def check_session(env: Mapping[str, str | None]) -> Check:
     )
 
 
+def check_voice_models(settings: Settings | None) -> Check:
+    if settings is None:
+        return Check("Voice model", "warn", "unknown: config didn't load")
+    voice = settings.data_dir / "voices" / f"{settings.speech.voice}.onnx"
+    if voice.is_file():
+        return Check("Voice model", "ok", settings.speech.voice)
+    return Check(
+        "Voice model", "ok", f"{settings.speech.voice} downloads on first use (about 60 MB)"
+    )
+
+
+def check_cuda_libraries(find_spec: Callable[[str], object] | None = None) -> Check:
+    import importlib.util
+
+    find = find_spec or importlib.util.find_spec
+    if find("nvidia.cublas") and find("nvidia.cudnn"):
+        return Check("CUDA libraries", "ok", "installed: Whisper can use the GPU")
+    return Check(
+        "CUDA libraries",
+        "warn",
+        "not installed: Whisper runs on the CPU only",
+        "uv sync --extra gpu",
+    )
+
+
+def check_display(env: Mapping[str, str | None]) -> Check:
+    if env.get("DISPLAY"):
+        return Check("X display", "ok", f"{env.get('DISPLAY')}: the push-to-talk hotkey works")
+    return Check(
+        "X display",
+        "warn",
+        "DISPLAY not set: the push-to-talk hotkey can't listen for keys",
+        "Run Noah from your desktop session (the systemd user service sets DISPLAY).",
+    )
+
+
 def check_memory(available: Callable[[], int] = lambda: psutil.virtual_memory().available) -> Check:
     free = available()
     detail = f"{free / 1e9:.1f} GB available"
@@ -164,5 +200,8 @@ def run_checks(
         check_gpu(),
         check_mic(),
         check_portaudio(),
+        check_voice_models(settings),
+        check_cuda_libraries(),
+        check_display(env),
         *check_commands(),
     ]

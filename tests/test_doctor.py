@@ -83,3 +83,13 @@ def test_session_x11_ok_wayland_warns():
 def test_low_memory_warns():
     assert doctor.check_memory(available=lambda: 500_000_000).status == "warn"
     assert doctor.check_memory(available=lambda: 4_000_000_000).status == "ok"
+
+
+def test_cuda_and_display_checks():
+    from noah.doctor import check_cuda_libraries, check_display
+
+    assert check_cuda_libraries(lambda name: object()).status == "ok"
+    missing = check_cuda_libraries(lambda name: None)
+    assert missing.status == "warn" and missing.hint == "uv sync --extra gpu"
+    assert check_display({"DISPLAY": ":1"}).status == "ok"
+    assert check_display({}).status == "warn"

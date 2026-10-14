@@ -4,12 +4,16 @@
 they confirm actions and where announcements go.
 """
 
+import asyncio
 from dataclasses import dataclass
 
 from noah.agent.llm import LLM, OpenRouterLLM
 from noah.agent.loop import Agent
 from noah.agent.prompts import make_system_prompt
+from noah.audio.player import Player
 from noah.config import Settings
+from noah.controls import Controls
+from noah.speech import Speaker
 from noah.tasks.announcer import Announcer, Say
 from noah.tasks.manager import TaskManager
 from noah.tasks.notifier import GdbusNotifier, Notifier
@@ -18,10 +22,20 @@ from noah.tools import default_tools
 from noah.tools.checklist import checklist_tools, render_task
 from noah.tools.registry import ToolRegistry
 from noah.tools.safety import AuditLog, Confirm
+from noah.tts.piper import PiperTTS
 
 
 class MissingAPIKey(Exception):
     pass
+
+
+async def make_speaker(settings: Settings) -> Speaker:
+    """Load the Piper voice (downloading it on first use) and open the audio output."""
+    tts = PiperTTS(settings.speech.voice, settings.data_dir / "voices", speed=settings.speech.speed)
+    await asyncio.to_thread(tts.load)
+    speaker = Speaker(tts, Player(tts.sample_rate))
+    speaker.start()
+    return speaker
 
 
 @dataclass
@@ -31,6 +45,7 @@ class Noah:
     tasks: TaskManager
     announcer: Announcer
     store: TaskStore
+    controls: Controls
 
     async def close(self) -> None:
         self.announcer.flush()
@@ -44,6 +59,10 @@ def make_llm(settings: Settings) -> LLM:
         api_key=settings.openrouter_api_key.get_secret_value(),
         model=settings.llm.model,
         base_url=settings.llm.base_url,
+        reasoning_effort=settings.llm.reasoning_effort,
+        max_tokens=settings.llm.max_tokens,
+        fallback_models=settings.llm.fallback_models,
+        provider={"data_collection": "deny"} if settings.llm.deny_data_collection else None,
     )
 
 
@@ -64,9 +83,10 @@ async def start(
         notifier = GdbusNotifier()
     announcer = Announcer(say, notifier, verbosity=settings.tasks.verbosity)
     tasks.subscribers.append(announcer)
+    controls = Controls(announcer)
 
     registry = ToolRegistry(
-        [*default_tools(), *checklist_tools(tasks)],
+        [*default_tools(), *checklist_tools(tasks), *controls.tools()],
         confirm=tasks.gate(confirm),
         audit=AuditLog(settings.state_dir / "actions.log"),
     )
@@ -84,4 +104,4 @@ async def start(
         system_prompt=make_system_prompt(checklists),
         max_steps=step_limit,
     )
-    return Noah(settings, agent, tasks, announcer, store)
+    return Noah(settings, agent, tasks, announcer, store, controls)

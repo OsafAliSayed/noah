@@ -174,3 +174,20 @@ async def test_broken_subscriber_does_not_break_updates(tmp_path: Path):
     task = await manager.create("t", ["a"])
     assert task.id
     await manager.store.close()
+
+
+def test_turn_timer_logs_marks(tmp_path: Path):
+    import json
+
+    from noah.metrics import TurnTimer
+
+    now = [10.0]
+    timer = TurnTimer(tmp_path / "timing.log", clock=lambda: now[0], memory=lambda: 321.0)
+    now[0] = 10.4
+    timer.mark("llm_first_token")
+    timer.mark("llm_first_token", at=99)  # only the first mark counts
+    timer.mark("first_audio", at=10.9)
+    entry = timer.record(mode="text")
+    assert entry["llm_first_token"] == 0.4
+    assert entry["first_audio"] == 0.9
+    assert json.loads((tmp_path / "timing.log").read_text())["rss_mb"] == 321.0

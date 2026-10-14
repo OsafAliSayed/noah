@@ -8,7 +8,9 @@ import typer
 
 from noah.agent.llm import LLMError, TextDelta
 from noah.agent.loop import Agent, AgentEvent, StepLimitReached, ToolFinished, ToolStarted
+from noah.metrics import TurnTimer
 from noah.session import Noah
+from noah.speech import Speaker
 from noah.tasks.models import Task
 from noah.tools.checklist import CHECKLIST_TOOLS
 from noah.tools.safety import Confirm
@@ -96,20 +98,46 @@ class Renderer:
         self.at_line_start = True
 
 
-async def run_turn(agent: Agent, text: str, renderer: Renderer, noah: Noah | None = None) -> bool:
-    """Run one user turn and print it. Returns False if the model couldn't be reached."""
+async def run_turn(
+    agent: Agent,
+    text: str,
+    renderer: Renderer,
+    noah: Noah | None = None,
+    speaker: Speaker | None = None,
+) -> bool:
+    """Run one user turn, print it, and speak it if there's a speaker. Returns False if the
+    model couldn't be reached."""
+    timer = TurnTimer(noah.settings.state_dir / "timing.log" if noah else None)
+    if speaker:
+        speaker.reset_timing()
+    ok = True
     try:
         async for event in agent.run(text):
+            if isinstance(event, TextDelta):
+                timer.mark("llm_first_token")
+                if speaker:
+                    speaker.feed(event.text)
             renderer.show(event)
     except LLMError as e:
         renderer.finish()
         renderer.write(typer.style(f"✗ {e}", fg="red") + "\n")
-        return False
+        if speaker:
+            speaker.say(str(e))
+        ok = False
     finally:
         if noah:
             noah.announcer.flush()
     renderer.finish()
-    return True
+    if speaker:
+        await speaker.finish()
+        timing = speaker.timing
+        if timing.first_sentence is not None:
+            timer.mark("first_sentence", timing.first_sentence)
+        if timing.first_audio is not None:
+            timer.mark("first_audio", timing.first_audio)
+    if noah:
+        timer.record(mode="text+speech" if speaker else "text")
+    return ok
 
 
 def unfinished_summary(tasks: list[Task]) -> str | None:
@@ -124,6 +152,7 @@ async def repl(
     noah: Noah,
     renderer: Renderer,
     read_line: Callable[[str], str] = input,
+    speaker: Speaker | None = None,
 ) -> None:
     write = renderer.write
     write(_dim(HELP) + "\n")
@@ -145,4 +174,4 @@ async def repl(
             continue
         write("noah> ")
         renderer.at_line_start = False
-        await run_turn(noah.agent, line, renderer, noah)
+        await run_turn(noah.agent, line, renderer, noah, speaker)

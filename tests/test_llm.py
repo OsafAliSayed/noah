@@ -116,3 +116,35 @@ async def test_missing_id_and_arguments_get_defaults():
 async def test_api_errors_become_llm_errors(error: Exception, message: str):
     with pytest.raises(LLMError, match=message):
         await _events(_llm(_FakeCompletions(error=error)))
+
+
+async def test_records_usage_and_sends_options():
+    from openai.types import CompletionUsage
+
+    from noah.agent.llm import Usage
+
+    final = ChatCompletionChunk(
+        id="x",
+        created=0,
+        model="m",
+        object="chat.completion.chunk",
+        choices=[],
+        usage=CompletionUsage.model_validate(
+            {"prompt_tokens": 10, "completion_tokens": 2, "total_tokens": 12, "cost": 0.0003}
+        ),
+    )
+    completions = _FakeCompletions([_chunk(ChoiceDelta(content="Hi")), final])
+    llm = OpenRouterLLM(
+        api_key="k",
+        model="m",
+        client=_FakeClient(completions),  # type: ignore[arg-type]
+        reasoning_effort="low",
+        provider={"data_collection": "deny"},
+    )
+    assert await _events(llm) == [TextDelta("Hi")]
+    assert llm.last_usage == Usage(10, 2, 0.0003)
+    assert completions.kwargs["extra_body"] == {
+        "reasoning": {"effort": "low"},
+        "provider": {"data_collection": "deny"},
+    }
+    assert completions.kwargs["stream_options"] == {"include_usage": True}

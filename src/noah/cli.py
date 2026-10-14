@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import logging
 import os
 
 import typer
@@ -10,8 +11,9 @@ from noah import __version__
 from noah.chat import Renderer, repl, run_turn, terminal_confirm, write_stdout
 from noah.config import ConfigError, Settings, load_settings
 from noah.doctor import Check, run_checks
-from noah.session import MissingAPIKey, Noah, start
-from noah.tasks.announcer import SYMBOLS
+from noah.session import MissingAPIKey, Noah, make_speaker, start
+from noah.speech import Speaker
+from noah.tasks.announcer import SYMBOLS, Say
 from noah.tasks.models import Task
 from noah.tasks.store import TaskStore
 
@@ -22,11 +24,6 @@ _SYMBOLS = {
     "warn": ("!", typer.colors.YELLOW),
     "fail": ("✗", typer.colors.RED),
 }
-
-
-def _not_built(milestone: str) -> None:
-    typer.echo(f"Not built yet (coming in {milestone}).", err=True)
-    raise typer.Exit(1)
 
 
 def _version_callback(value: bool) -> None:
@@ -52,9 +49,20 @@ def _settings() -> Settings:
         raise typer.Exit(1) from None
 
 
-async def _start(renderer: Renderer) -> Noah:
+def _say_to(renderer: Renderer, speaker: Speaker | None) -> Say:
+    if speaker is None:
+        return renderer.announce
+
+    def say(line: str) -> None:
+        renderer.announce(line)
+        speaker.say(line)
+
+    return say
+
+
+async def _start(renderer: Renderer, speaker: Speaker | None = None) -> Noah:
     try:
-        return await start(_settings(), confirm=terminal_confirm(), say=renderer.announce)
+        return await start(_settings(), confirm=terminal_confirm(), say=_say_to(renderer, speaker))
     except MissingAPIKey:
         typer.echo(
             "OPENROUTER_API_KEY is not set. Add it to .env or ~/.config/noah/.env "
@@ -64,39 +72,70 @@ async def _start(renderer: Renderer) -> Noah:
         raise typer.Exit(1) from None
 
 
+async def _speaker(settings: Settings) -> Speaker:
+    typer.echo(typer.style("Loading the voice...", dim=True))
+    try:
+        return await make_speaker(settings)
+    except Exception as e:
+        typer.echo(f"Couldn't start speech: {e}", err=True)
+        raise typer.Exit(1) from None
+
+
 @app.command()
-def chat() -> None:
+def chat(speak: bool = typer.Option(False, "--speak", help="Answer out loud too.")) -> None:
     """Talk to Noah by typing."""
 
     async def main() -> None:
         renderer = Renderer(write_stdout)
-        noah = await _start(renderer)
+        speaker = await _speaker(_settings()) if speak else None
+        noah = await _start(renderer, speaker)
         try:
-            await repl(noah, renderer)
+            await repl(noah, renderer, speaker=speaker)
         finally:
             await noah.close()
+            if speaker:
+                await speaker.close()
 
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(main())
 
 
 @app.command()
-def run() -> None:
-    """Start the voice daemon."""
-    _not_built("M6")
+def run(
+    ptt: bool = typer.Option(False, "--ptt", help="Push-to-talk only: no wake word."),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Log debug details."),
+) -> None:
+    """Start the voice daemon: talk to Noah with the wake word or the hotkey."""
+    from noah.voice import run_voice
+
+    logging.basicConfig(
+        level=logging.DEBUG if verbose else logging.WARNING,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    settings = _settings()
+    if settings.openrouter_api_key is None:
+        typer.echo("OPENROUTER_API_KEY is not set. Run `noah doctor`.", err=True)
+        raise typer.Exit(1)
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(run_voice(settings, mode="ptt" if ptt else None))
 
 
 @app.command()
-def say(text: str) -> None:
+def say(
+    text: str, speak: bool = typer.Option(False, "--speak", help="Answer out loud too.")
+) -> None:
     """Run one command and exit."""
 
     async def main() -> bool:
         renderer = Renderer(write_stdout)
-        noah = await _start(renderer)
+        speaker = await _speaker(_settings()) if speak else None
+        noah = await _start(renderer, speaker)
         try:
-            return await run_turn(noah.agent, text, renderer, noah)
+            return await run_turn(noah.agent, text, renderer, noah, speaker)
         finally:
             await noah.close()
+            if speaker:
+                await speaker.close()
 
     if not asyncio.run(main()):
         raise typer.Exit(1)
