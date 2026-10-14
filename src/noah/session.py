@@ -22,6 +22,7 @@ from noah.tools import default_tools
 from noah.tools.checklist import checklist_tools, render_task
 from noah.tools.registry import ToolRegistry
 from noah.tools.safety import AuditLog, Confirm
+from noah.tools.web import openrouter_search, web_tools
 from noah.tts.piper import PiperTTS
 
 
@@ -46,6 +47,12 @@ class Noah:
     announcer: Announcer
     store: TaskStore
     controls: Controls
+
+    def side_agent(self) -> Agent:
+        """A second agent with its own conversation and the same tools, for talking to Noah
+        while a checklist runs in the background."""
+        main = self.agent
+        return Agent(main.llm, main.tools, main.system_prompt, main.max_steps)
 
     async def close(self) -> None:
         self.announcer.flush()
@@ -86,7 +93,12 @@ async def start(
     controls = Controls(announcer)
 
     registry = ToolRegistry(
-        [*default_tools(), *checklist_tools(tasks), *controls.tools()],
+        [
+            *default_tools(),
+            *checklist_tools(tasks),
+            *controls.tools(),
+            *web_tools(openrouter_search(settings)),
+        ],
         confirm=tasks.gate(confirm),
         audit=AuditLog(settings.state_dir / "actions.log"),
     )

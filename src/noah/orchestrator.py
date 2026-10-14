@@ -109,6 +109,12 @@ class Orchestrator:
         self.clock = clock
         self.agent: Agent | None = None
         self.on_turn_end: Callable[[], None] | None = None
+        # Background checklists: when the user interrupts a turn that's working through a
+        # checklist, the turn keeps going and new requests go to a second agent.
+        self.side_agent: Agent | None = None
+        self.keep_running: Callable[[], bool] = lambda: False
+        self._background: asyncio.Task[None] | None = None
+        self._confirm_lock = asyncio.Lock()
 
         self.state: State = "idle"
         self.do_not_disturb = False
@@ -169,6 +175,13 @@ class Orchestrator:
 
     async def confirm(self, action: str) -> bool:
         """Spoken confirmation: ask, listen for yes or no, ask once more if it's unclear."""
+        async with self._confirm_lock:
+            # Don't ask over the user while they're giving a new command.
+            while self.state == "listening":
+                await asyncio.sleep(0.1)
+            return await self._ask(action)
+
+    async def _ask(self, action: str) -> bool:
         question = f"I need your OK to {action}. Go ahead?"
         for _ in range(2):
             self.output(f"  ? {question}")
@@ -292,10 +305,27 @@ class Orchestrator:
     def _barge_in(self, trigger: Trigger) -> None:
         log.info("barge-in")
         self.speaker.stop()
-        if self._turn and not self._turn.done():
-            self._turn.cancel()
-        self._turn = None
+        turn, self._turn = self._turn, None
+        if turn and not turn.done():
+            if self._background is None and self.side_agent and self.keep_running():
+                # A checklist is under way: let it finish in the background.
+                self._background = turn
+                self.output("  (the checklist keeps going in the background)")
+            else:
+                turn.cancel()
         self._start_listening(trigger)
+
+    def cancel_background(self) -> bool:
+        """Stop a checklist that's running in the background ("cancel that")."""
+        task, self._background = self._background, None
+        if task and not task.done() and task is not asyncio.current_task():
+            task.cancel()
+            return True
+        return False
+
+    @property
+    def background_running(self) -> bool:
+        return self._background is not None and not self._background.done()
 
     def _handle_confirm(self, kind: str, frame: Frame | None) -> None:
         request = self._confirm
@@ -365,20 +395,25 @@ class Orchestrator:
                 follow_up = False
                 return
             self.output(f"you> {text}")
-            if self.agent is None:
+            agent = self.side_agent if self.background_running else self.agent
+            if agent is None:
                 return
             reply: list[str] = []
             try:
-                async for event in self.agent.run(text):
+                async for event in agent.run(text):
                     if isinstance(event, TextDelta):
                         timer.mark("llm_first_token")
                         reply.append(event.text)
-                        self.speaker.feed(event.text)
+                        if not self._in_background():
+                            self.speaker.feed(event.text)
             except LLMError as e:
                 self.output(f"  ✗ {e}")
                 self.speaker.say(str(e))
             if reply:
                 self.output("noah> " + "".join(reply).strip())
+                if self._in_background():
+                    # Its final words come back like a progress update, held if you're talking.
+                    self.announce("".join(reply).strip())
             if self.on_turn_end:
                 self.on_turn_end()
             await self.speaker.finish()
@@ -392,6 +427,11 @@ class Orchestrator:
             if self._turn is asyncio.current_task():
                 self._turn = None
                 self._back_to_idle(follow_up)
+            elif self._background is asyncio.current_task():
+                self._background = None
+
+    def _in_background(self) -> bool:
+        return self._background is not None and self._background is asyncio.current_task()
 
     def _endpointer(self, wait_ms: int = 5000, max_ms: int = 15000) -> Endpointer:
         return Endpointer(
@@ -409,7 +449,8 @@ class Orchestrator:
         task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
     async def close(self) -> None:
-        if self._turn:
-            self._turn.cancel()
-            with contextlib.suppress(BaseException):
-                await self._turn
+        for task in (self._turn, self._background):
+            if task:
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task

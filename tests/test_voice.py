@@ -321,3 +321,54 @@ async def test_microphone_fans_out_and_drops_old_frames():
     mic.unsubscribe(b)
     mic.publish([frame(0.4)])
     assert b.qsize() == 2
+
+
+async def test_barge_in_during_a_checklist_keeps_it_running():
+    release = asyncio.Event()
+
+    class SlowChecklistLLM(FakeLLM):
+        async def stream(self, messages, tools):  # type: ignore[override]
+            await release.wait()
+            yield TextDelta("All three steps are done.")
+
+    orch, tts, lines, _ = _orchestrator(
+        FakeSTT("set up the project", "what time is it"), SlowChecklistLLM()
+    )
+    orch.side_agent = Agent(FakeLLM(text("It's noon.")), FakeTools(), system_prompt=lambda: "S")
+    orch.keep_running = lambda: True
+    orch.handle("frame", frame(WAKE))
+    _speak(orch)
+    await asyncio.sleep(0.05)
+    background = orch._turn
+    orch.handle("frame", frame(WAKE))  # interrupt with a new question
+    assert orch.background_running and orch._background is background
+    _speak(orch)
+    await _finish_turn(orch)
+    assert "noah> It's noon." in lines
+    release.set()
+    await asyncio.wait_for(background, 2)  # type: ignore[arg-type]
+    await orch.speaker.finish()
+    assert "All three steps are done." in tts.said
+    assert not orch.background_running
+
+
+async def test_cancel_background():
+    release = asyncio.Event()
+
+    class Waits(FakeLLM):
+        async def stream(self, messages, tools):  # type: ignore[override]
+            await release.wait()
+            yield TextDelta("done")
+
+    orch, _, _, _ = _orchestrator(FakeSTT("long job", "cancel that"), Waits())
+    orch.side_agent = Agent(FakeLLM(text("Cancelled.")), FakeTools(), system_prompt=lambda: "S")
+    orch.keep_running = lambda: True
+    orch.handle("frame", frame(WAKE))
+    _speak(orch)
+    await asyncio.sleep(0.05)
+    background = orch._turn
+    orch.handle("frame", frame(WAKE))
+    assert orch.cancel_background()
+    with pytest.raises(asyncio.CancelledError):
+        await background  # type: ignore[misc]
+    assert not orch.background_running

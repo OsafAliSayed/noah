@@ -184,6 +184,70 @@ def tasks(
     typer.echo("\n\n".join(format_task(t) for t in found))
 
 
+service_app = typer.Typer(help="Run Noah at login as a systemd user service.")
+config_app = typer.Typer(help="Noah's config file.")
+app.add_typer(service_app, name="service")
+app.add_typer(config_app, name="config")
+
+
+@service_app.command("install")
+def service_install(
+    start_now: bool = typer.Option(True, "--start/--no-start", help="Start it right away."),
+) -> None:
+    """Install and enable the service, so Noah starts when you log in."""
+    from pathlib import Path
+
+    from noah import service
+
+    project = Path(__file__).resolve().parents[2]
+    try:
+        path = service.install(project, start=start_now)
+    except FileNotFoundError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(1) from None
+    typer.echo(f"Installed {path}.")
+    typer.echo("Noah starts at login. Logs: journalctl --user -u noah -f")
+
+
+@service_app.command("uninstall")
+def service_uninstall() -> None:
+    """Stop and remove the service."""
+    from noah import service
+
+    removed = service.uninstall()
+    typer.echo("Removed the service." if removed else "The service wasn't installed.")
+
+
+@service_app.command("status")
+def service_status() -> None:
+    """Show whether the service is running, with its latest log lines."""
+    from noah import service
+
+    typer.echo(service.status())
+
+
+@config_app.command("init")
+def config_init(
+    force: bool = typer.Option(False, "--force", help="Overwrite an existing config file."),
+) -> None:
+    """Write a commented config.toml with every setting at its default."""
+    from noah.config import default_config_dir, example_config
+
+    path = default_config_dir() / "config.toml"
+    if path.exists() and not force:
+        typer.echo(f"{path} already exists. Use --force to replace it.", err=True)
+        raise typer.Exit(1)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(example_config())
+    typer.echo(f"Wrote {path}.")
+
+
+@config_app.command("path")
+def config_path() -> None:
+    """Print where Noah reads its config from."""
+    typer.echo(_settings().config_path)
+
+
 def _print_check(check: Check) -> None:
     symbol, color = _SYMBOLS[check.status]
     typer.echo(f"  {typer.style(symbol, fg=color, bold=True)} {check.name}: {check.detail}")

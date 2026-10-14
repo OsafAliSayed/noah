@@ -56,3 +56,37 @@ def test_chat_and_say_need_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path, ar
     result = runner.invoke(app, args)
     assert result.exit_code == 1
     assert "OPENROUTER_API_KEY is not set" in result.output
+
+
+def test_config_init_writes_once(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["config", "init"])
+    assert result.exit_code == 0
+    assert (tmp_path / "noah" / "config.toml").read_text().startswith("# Noah's settings.")
+    assert runner.invoke(app, ["config", "init"]).exit_code == 1
+    assert runner.invoke(app, ["config", "init", "--force"]).exit_code == 0
+
+
+def test_service_unit_and_install(tmp_path):
+    from pathlib import Path
+
+    from noah import service
+
+    text = service.unit_text(Path("/p/.venv/bin/noah"), Path("/p"))
+    assert "ExecStart=/p/.venv/bin/noah run" in text
+    assert "WorkingDirectory=/p" in text
+    assert "WantedBy=graphical-session.target" in text
+
+    ran: list[list[str]] = []
+
+    def run(cmd):
+        ran.append(cmd)
+        import subprocess
+
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    path = service.install(Path("/p"), run=run, home=tmp_path)
+    assert path.read_text().startswith("[Unit]")
+    assert ran[-1] == ["systemctl", "--user", "enable", "--now", "noah.service"]
+    assert service.uninstall(run=run, home=tmp_path)
+    assert not path.exists()

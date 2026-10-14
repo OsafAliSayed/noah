@@ -47,16 +47,17 @@ Pulled from the laptop on 2026-10-14:
   |---|---|
   | Python runtime and app code | about 150 MB |
   | openWakeWord + Silero VAD (ONNX) | about 100 MB |
-  | faster-whisper `small.en`, int8, on CPU | about 500 MB |
+  | faster-whisper `base.en`, int8, on CPU (battery) | about 150 MB |
   | Piper voice (medium quality) | about 100 MB |
   | **Total** | **under 1 GB** |
 
   With the GPU profile, Whisper moves to VRAM and RAM use drops further.
 - **Idle cost is only the wake word.** While idle, only the wake word model runs on small audio frames, which should use a few percent of one CPU core. Whisper, TTS and the LLM run only after the wake word fires.
 - **No local LLM.** A 4 GB GPU can only hold small models with weak tool calling, and loading one would use the RAM we don't have. OpenRouter handles the brain.
-- **Power profiles:**
-  - On charger: Whisper `large-v3-turbo` (or `distil-large-v3`) on the GTX 1650, `int8_float16`. Most accurate, about 1–1.5 GB VRAM.
-  - On battery: Whisper `small.en` int8 on the CPU. Lighter, still accurate for short commands.
+- **Power profiles** (measured on this laptop in M6; see `[stt]` in `config.example.toml`):
+  - On charger: Whisper `small.en`, `int8_float16`, on the GTX 1650. About 0.47 s per command and 425 MB VRAM. The 1650 has no tensor cores, so `large-v3-turbo` took 1.8 s or more and isn't worth it.
+  - On battery: Whisper `base.en` int8 on the CPU, 6 threads. About 0.55 s per command. `small.en` on the CPU took 1.5 s.
+  - Measured RAM with everything loaded on the GPU profile is about 1 GB. Most of it is the CUDA libraries.
   - Noah picks the profile when it starts and when the charger is plugged in or removed. A config option can force either one.
 
 ### System packages to install
@@ -115,7 +116,7 @@ Everything runs in one long-lived Python process, started as a systemd user serv
 
 ### 3. Voice activity detection (VAD)
 
-- **Choice:** Silero VAD (ONNX, CPU).
+- **Choice:** Silero VAD (ONNX, CPU). The model file ships with faster-whisper, so no torch is needed. `audio/vad.py` runs it one 32 ms frame at a time.
 - After the wake word, it decides when you have **stopped speaking**, so recording stops without a fixed timeout.
 - While Noah is speaking, it detects you talking over Noah (**barge-in**): Noah stops talking and listens.
 
@@ -182,8 +183,9 @@ All OS-specific code lives in tools, behind a small `platform` module, so the ag
 | `clipboard_get`, `clipboard_set` | `xclip` |
 | `focus_window(name)`, `list_windows()` | `wmctrl`, `xdotool` |
 | `system_info()` | `psutil` (battery, CPU, memory, disk) |
-| `web_search(query)` | A search API such as Brave or Tavily |
-| `screenshot()` | `gnome-screenshot` |
+| `web_search(query)` | OpenRouter's web plugin, so no second API key |
+| `screenshot()` | `ffmpeg -f x11grab` (`gnome-screenshot` isn't installed) |
+| `set_verbosity`, `do_not_disturb` | Voice controls: "keep it quiet", "do not disturb" |
 
 **Later: MCP.** Noah will be able to act as an MCP (Model Context Protocol) client and load tools from any MCP server (calendar, email, GitHub, Home Assistant and so on), so it gains abilities without new code. The internal tools use the same interface, so both look the same to the agent.
 

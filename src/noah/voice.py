@@ -24,6 +24,7 @@ from noah.power import (
 )
 from noah.session import make_speaker, start
 from noah.stt.faster_whisper import WhisperSTT
+from noah.tasks.manager import TaskEvent
 
 log = logging.getLogger(__name__)
 Output = Callable[[str], None]
@@ -111,8 +112,16 @@ async def run_voice(settings: Settings, mode: str | None = None, output: Output 
     )
     noah = await start(settings, confirm=orchestrator.confirm, say=orchestrator.announce)
     orchestrator.agent = noah.agent
+    orchestrator.side_agent = noah.side_agent()
+    orchestrator.keep_running = lambda: bool(noah.tasks.open_tasks())
     orchestrator.on_turn_end = noah.announcer.flush
     noah.controls.attach(orchestrator)
+
+    async def stop_cancelled(event: TaskEvent) -> None:
+        if event.task.finished and event.item and event.item.note == "cancelled":
+            orchestrator.cancel_background()
+
+    noah.tasks.subscribers.append(stop_cancelled)
 
     ptt = PushToTalk(settings.voice.ptt_key, orchestrator.ptt_down, orchestrator.ptt_up)
     try:

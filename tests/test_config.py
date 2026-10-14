@@ -57,3 +57,14 @@ def test_noah_config_env_var_picks_file(tmp_path: Path):
 def test_invalid_config_raises(tmp_path: Path, toml: str):
     with pytest.raises(ConfigError):
         _load(tmp_path, toml)
+
+
+def test_example_config_is_valid_and_matches_the_defaults(tmp_path):
+    from noah.config import example_config
+
+    path = tmp_path / "config.toml"
+    path.write_text(example_config())
+    env = {"XDG_DATA_HOME": str(tmp_path), "XDG_STATE_HOME": str(tmp_path)}
+    from_file = load_settings(config_path=path, env=env)
+    defaults = load_settings(config_path=tmp_path / "missing.toml", env=env)
+    assert from_file.model_dump() == defaults.model_dump()

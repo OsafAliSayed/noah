@@ -96,6 +96,13 @@ class Settings(_Section):
     config_found: bool = Field(default=False, exclude=True)
 
 
+def example_config() -> str:
+    """The commented config.toml that `noah config init` writes."""
+    from importlib.resources import files
+
+    return files("noah").joinpath("config.example.toml").read_text()
+
+
 class ConfigError(Exception):
     """config.toml exists but cannot be read or has invalid values."""
 

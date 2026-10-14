@@ -1,0 +1,62 @@
+# Noah's settings. `noah config init` copies this file to ~/.config/noah/config.toml.
+# Every value shown is the default, so you only need to keep the lines you change.
+# Unknown keys are an error, so a typo is caught instead of silently ignored.
+# API keys don't go here: put OPENROUTER_API_KEY in .env or ~/.config/noah/.env.
+
+[llm]
+# Any OpenRouter model with tool calling. See docs/model-eval.md for how this was chosen.
+model = "anthropic/claude-haiku-5.5"
+# Tried in order by OpenRouter if the main model is down or rate limited.
+fallback_models = ["deepseek/deepseek-v4.1-flash"]
+# For models that reason: "minimal", "low", "medium" or "high". Leave unset for the default.
+# reasoning_effort = "low"
+# Don't let OpenRouter's providers store or train on your prompts.
+deny_data_collection = true
+# Spoken replies are short. A cap also keeps OpenRouter from reserving credit for 65k tokens.
+max_tokens = 2048
+# Model calls per request: a plain request, and one with a checklist (two updates per step).
+max_steps = 8
+max_steps_with_checklist = 40
+
+[tasks]
+# How much Noah says about checklist progress: "quiet", "normal" or "chatty".
+# You can also say "keep it quiet" or "tell me everything".
+verbosity = "normal"
+# A desktop notification per checklist, updated in place.
+notifications = true
+
+[speech]
+# A Piper voice: https://huggingface.co/rhasspy/piper-voices (downloaded on first use).
+voice = "en_US-lessac-medium"
+# 1.0 is normal speed; 1.2 is a little faster.
+speed = 1.0
+
+[voice]
+# "wake": say the wake word. "ptt": hold ptt_key to talk. The hotkey works in both modes.
+mode = "wake"
+ptt_key = "ctrl_r"
+# hey_jarvis, hey_mycroft or alexa, or a path to your own .onnx model (docs/wake-word.md).
+wakeword_model = "hey_jarvis"
+# Higher means fewer false wake-ups but more missed ones.
+wakeword_threshold = 0.5
+# A PortAudio device name or number; unset uses the system default input.
+# mic_device = "pulse"
+vad_threshold = 0.5
+# How long a pause ends your sentence, in milliseconds.
+silence_ms = 700
+# After Noah answers, keep listening this long for a follow-up without the wake word.
+follow_up_seconds = 5.0
+# Forget the conversation after this much quiet. Checklists are kept.
+session_timeout_seconds = 120
+chime = true
+# Saying the wake word, or pressing the hotkey, while Noah talks stops it and listens.
+barge_in = true
+
+[stt]
+# "auto" uses the GPU model on the charger and the CPU model on battery.
+profile = "auto"
+# Timed on the GTX 1650: small.en takes 0.47 s per command on the GPU; base.en takes 0.55 s
+# on the CPU. Bigger models are more accurate but much slower on this hardware.
+gpu_model = "small.en"
+cpu_model = "base.en"
+cpu_threads = 6

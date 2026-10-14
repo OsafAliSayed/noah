@@ -191,3 +191,23 @@ def test_turn_timer_logs_marks(tmp_path: Path):
     assert entry["llm_first_token"] == 0.4
     assert entry["first_audio"] == 0.9
     assert json.loads((tmp_path / "timing.log").read_text())["rss_mb"] == 321.0
+
+
+def test_controls_change_verbosity_and_dnd():
+    from noah.controls import Controls
+    from noah.tasks.announcer import Announcer
+
+    announcer = Announcer(lambda line: None)
+    controls = Controls(announcer)
+    tools = {t.name: t for t in controls.tools()}
+    assert "quiet" in tools["set_verbosity"].fn(level="quiet")
+    assert announcer.verbosity == "quiet"
+    assert "only applies to voice" in tools["do_not_disturb"].fn(on=True)
+
+    class FakeOrchestrator:
+        do_not_disturb = False
+
+    orchestrator = FakeOrchestrator()
+    controls.attach(orchestrator)  # type: ignore[arg-type]
+    assert tools["do_not_disturb"].fn(on=True) == "Do not disturb is on."
+    assert orchestrator.do_not_disturb

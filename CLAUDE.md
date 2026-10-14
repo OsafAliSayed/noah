@@ -13,11 +13,11 @@ Noah is a voice-controlled assistant for the local OS (Jarvis style): wake word 
 ## Commands
 
 ```bash
-uv sync                                   # install deps (uv lives in ~/.local/bin)
+uv sync --extra gpu                       # install deps; the gpu extra adds CUDA libs (uv lives in ~/.local/bin)
 uv run noah doctor                        # check system deps, API key, mic, GPU, power
 uv run pytest                             # all tests (offline, no mic needed)
 uv run pytest tests/test_config.py::test_defaults_when_no_config_file   # one test
-uv run ruff format src tests && uv run ruff check src tests
+uv run ruff format src tests scripts && uv run ruff check src tests scripts
 uv run pyright
 ```
 
@@ -34,12 +34,15 @@ All four (format, lint, pyright, pytest) should pass before a milestone is done.
 - `session.py:start()` builds a running Noah (agent, registry, `TaskManager`, `Announcer`) and loads unfinished checklists. `noah chat`, `noah say` and the voice daemon all start there; they differ only in the `confirm` and `say` callbacks.
 - Checklists (`tasks/`): `TaskStore` (SQLite, `PRAGMA user_version` migrations) → `TaskManager` (keeps open tasks in memory, emits `TaskEvent`s to async subscribers, `gate(confirm)` marks the active item `waiting` while asking) → `Announcer` (template lines, grouping, verbosity, `GdbusNotifier`). The agent's checklist tools are built per manager in `tools/checklist.py`; `default_tools()` stays stateless.
 - `chat.py:Renderer` prints events and announcer lines for `noah chat` / `noah say`, hiding checklist tool calls.
+- Voice (`noah run`, built in `voice.py:run_voice`): `audio/input.py:Microphone` (one 16 kHz stream, a queue per subscriber) → `orchestrator.py:Orchestrator`, a single event loop over mic frames and hotkey presses with states `idle` / `listening` / `busy`. It owns the wake word (`audio/wakeword.py`), VAD endpointing (`audio/vad.py`), Whisper (`stt/faster_whisper.py`, profile from `power.py`), spoken confirmation (`Orchestrator.confirm`), barge-in, follow-up, held announcements, do-not-disturb and background checklists. `speech.py:Speaker` splits streamed text into sentences and speaks them through Piper (`tts/piper.py`) and `audio/player.py`. Each turn's timings and RAM go to `timing.log` (`metrics.py`).
+- Other tool factories that need state: `controls.py` (verbosity, DND) and `tools/web.py` (search via OpenRouter's web plugin). All are added in `session.start()`.
+- `scripts/eval_models.py` benchmarks models through the real loop with simulated tools (see `docs/model-eval.md`). It costs real OpenRouter credit.
 - Tests use `tests/fakes.py`: `FakeLLM` replays scripted responses and records what it was sent; `FakeTools` records executions.
 
 ## Conventions
 
 - Target machine: Pop!_OS 22.04, GNOME on **X11**, Ryzen 5 4600H, 14 GB RAM (often only ~5 GB free), GTX 1650 4 GB. Noah's process must stay under ~1 GB RAM; never add a local LLM.
-- Text first, voice last: the agent, tools and checklists must work in `noah chat` before audio touches them.
+- Text first, voice last: the agent, tools and checklists must work in `noah chat` before audio touches them. The orchestrator is tested by feeding it frames directly (`tests/test_voice.py`); never open the real mic in tests.
 - Anything that touches the system (subprocesses, `/sys`, env, hardware) is passed in as an argument with a real default, so tests can fake it. See `doctor.py` and `load_settings(env=...)`.
 - Config: `config.py` loads `~/.config/noah/config.toml` (or `$NOAH_CONFIG`) into pydantic models with `extra="forbid"`; secrets only come from the environment or `.env` files, never the TOML.
 - Every tool will declare a risk level (`safe` / `confirm` / `deny`) and go through the safety gate. Don't add a path that runs OS actions around it.
