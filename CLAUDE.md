@@ -22,6 +22,14 @@ uv run pyright
 
 All four (format, lint, pyright, pytest) should pass before a milestone is done.
 
+## How the agent fits together
+
+- `agent/llm.py`: `OpenRouterLLM.stream()` yields `TextDelta`s as they arrive, then complete `ToolCall`s (fragments are assembled by index). Every SDK error becomes `LLMError` with a user-facing message. Messages and tool schemas are plain OpenAI-format dicts.
+- `agent/loop.py`: `Agent.run(text)` is an async generator of events (`TextDelta`, `ToolStarted`, `ToolFinished`, `StepLimitReached`). The system prompt is a callable rebuilt on every model call, so it is not stored in `history`. Tool exceptions are fed back to the model as `Error: ...` results; an `LLMError` rolls the whole turn out of `history` and re-raises.
+- `ToolExecutor` (in `loop.py`) is the seam the M2 tool registry plugs into; until then `chat.build_agent` uses `NoTools`.
+- `chat.py` renders events for `noah chat` / `noah say`. The voice daemon will consume the same events.
+- Tests use `tests/fakes.py`: `FakeLLM` replays scripted responses and records what it was sent; `FakeTools` records executions.
+
 ## Conventions
 
 - Target machine: Pop!_OS 22.04, GNOME on **X11**, Ryzen 5 4600H, 14 GB RAM (often only ~5 GB free), GTX 1650 4 GB. Noah's process must stay under ~1 GB RAM; never add a local LLM.
