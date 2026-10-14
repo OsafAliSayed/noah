@@ -16,6 +16,7 @@ from typing import Literal
 import psutil
 
 from noah.config import Settings
+from noah.power import POWER_SUPPLY_DIR, read_charger
 
 Status = Literal["ok", "warn", "fail"]
 Runner = Callable[[list[str]], str | None]
@@ -122,17 +123,12 @@ def check_gpu(run: Runner = run_command) -> Check:
     return Check("GPU", "warn", "no NVIDIA GPU found: speech-to-text will run on the CPU")
 
 
-def check_power(power_dir: Path = Path("/sys/class/power_supply")) -> Check:
-    for supply in sorted(power_dir.glob("*")):
-        try:
-            if (supply / "type").read_text().strip() != "Mains":
-                continue
-            online = (supply / "online").read_text().strip() == "1"
-        except OSError:
-            continue
-        state = "on charger" if online else "on battery"
-        return Check("Power", "ok", f"{state} ({supply.name})")
-    return Check("Power", "warn", "no charger found: Noah will always use the battery profile")
+def check_power(power_dir: Path = POWER_SUPPLY_DIR) -> Check:
+    charger = read_charger(power_dir)
+    if charger is None:
+        return Check("Power", "warn", "no charger found: Noah will always use the battery profile")
+    state = "on charger" if charger.online else "on battery"
+    return Check("Power", "ok", f"{state} ({charger.supply})")
 
 
 def check_session(env: Mapping[str, str | None]) -> Check:

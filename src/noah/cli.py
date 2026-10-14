@@ -1,10 +1,14 @@
 """Command-line entry point: `noah <command>`."""
 
+import asyncio
+import contextlib
 import os
 
 import typer
 
 from noah import __version__
+from noah.agent.loop import Agent
+from noah.chat import MissingAPIKey, build_agent, repl, run_turn
 from noah.config import ConfigError, Settings, load_settings
 from noah.doctor import Check, run_checks
 
@@ -37,10 +41,26 @@ def main(
     pass
 
 
+def _agent() -> Agent:
+    try:
+        return build_agent(load_settings())
+    except ConfigError as e:
+        typer.echo(f"Config error: {e}", err=True)
+    except MissingAPIKey:
+        typer.echo(
+            "OPENROUTER_API_KEY is not set. Add it to .env or ~/.config/noah/.env "
+            "(see .env.example), or run `noah doctor`.",
+            err=True,
+        )
+    raise typer.Exit(1)
+
+
 @app.command()
 def chat() -> None:
     """Talk to Noah by typing."""
-    _not_built("M1")
+    agent = _agent()
+    with contextlib.suppress(KeyboardInterrupt):
+        asyncio.run(repl(agent))
 
 
 @app.command()
@@ -52,7 +72,9 @@ def run() -> None:
 @app.command()
 def say(text: str) -> None:
     """Run one command and exit."""
-    _not_built("M1")
+    agent = _agent()
+    if not asyncio.run(run_turn(agent, text)):
+        raise typer.Exit(1)
 
 
 @app.command()
