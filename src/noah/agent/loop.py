@@ -21,16 +21,6 @@ class ToolExecutor(Protocol):
         ...
 
 
-class NoTools:
-    """Stand-in until M2's tool registry exists."""
-
-    def schemas(self) -> list[ToolSchema]:
-        return []
-
-    async def execute(self, name: str, arguments: str) -> str:
-        return f"Error: there is no tool called {name!r}."
-
-
 @dataclass(frozen=True)
 class ToolStarted:
     call: ToolCall

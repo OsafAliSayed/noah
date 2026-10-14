@@ -56,3 +56,12 @@ async def test_repl_exits_on_eof():
         raise EOFError
 
     await repl(_agent(FakeLLM()), read_line=eof, write=_Out())
+
+
+async def test_terminal_confirm_accepts_yes_only():
+    from noah.chat import terminal_confirm
+
+    assert await terminal_confirm(lambda _: "y", interactive=True)("run `x`")
+    assert await terminal_confirm(lambda _: " YES ", interactive=True)("run `x`")
+    assert not await terminal_confirm(lambda _: "", interactive=True)("run `x`")
+    assert not await terminal_confirm(lambda _: "y", interactive=False)("run `x`")

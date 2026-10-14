@@ -7,9 +7,12 @@ from collections.abc import Callable
 import typer
 
 from noah.agent.llm import LLM, LLMError, OpenRouterLLM, TextDelta
-from noah.agent.loop import Agent, AgentEvent, NoTools, StepLimitReached, ToolFinished, ToolStarted
+from noah.agent.loop import Agent, AgentEvent, StepLimitReached, ToolFinished, ToolStarted
 from noah.agent.prompts import current_system_prompt
 from noah.config import Settings
+from noah.tools import default_tools
+from noah.tools.registry import ToolRegistry
+from noah.tools.safety import AuditLog, Confirm
 
 Write = Callable[[str], None]
 
@@ -27,7 +30,29 @@ def write_stdout(text: str) -> None:
     sys.stdout.flush()
 
 
-def build_agent(settings: Settings, llm: LLM | None = None) -> Agent:
+def terminal_confirm(
+    read_line: Callable[[str], str] = input, interactive: bool | None = None
+) -> Confirm:
+    """Ask y/n in the terminal. With no terminal to ask in (piped input), always decline."""
+    if interactive is None:
+        interactive = sys.stdin.isatty()
+
+    async def confirm(action: str) -> bool:
+        if not interactive:
+            return False
+        question = typer.style(f"  Allow Noah to {action}? [y/N] ", fg="yellow")
+        try:
+            answer = await asyncio.to_thread(read_line, question)
+        except EOFError:
+            return False
+        return answer.strip().lower() in ("y", "yes")
+
+    return confirm
+
+
+def build_agent(
+    settings: Settings, llm: LLM | None = None, confirm: Confirm | None = None
+) -> Agent:
     if llm is None:
         if settings.openrouter_api_key is None:
             raise MissingAPIKey
@@ -36,9 +61,14 @@ def build_agent(settings: Settings, llm: LLM | None = None) -> Agent:
             model=settings.llm.model,
             base_url=settings.llm.base_url,
         )
+    tools = ToolRegistry(
+        default_tools(),
+        confirm=confirm or terminal_confirm(),
+        audit=AuditLog(settings.state_dir / "actions.log"),
+    )
     return Agent(
         llm=llm,
-        tools=NoTools(),
+        tools=tools,
         system_prompt=current_system_prompt,
         max_steps=settings.llm.max_steps,
     )
