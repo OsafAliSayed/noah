@@ -46,11 +46,12 @@ class Agent:
         llm: LLM,
         tools: ToolExecutor,
         system_prompt: Callable[[], str],
-        max_steps: int = 8,
+        max_steps: int | Callable[[], int] = 8,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.system_prompt = system_prompt
+        # A callable limit is re-read every step, so it can grow once a checklist exists.
         self.max_steps = max_steps
         # The conversation without the system prompt, which is rebuilt on every call.
         self.history: list[Message] = []
@@ -64,7 +65,14 @@ class Agent:
         turn_start = len(self.history)
         self.history.append({"role": "user", "content": user_text})
         try:
-            for _ in range(self.max_steps):
+            steps = limit = 0
+            while True:
+                # Only ever raise the limit within a turn: finishing a checklist mustn't cut
+                # off the summary that follows it.
+                limit = max(limit, self._step_limit())
+                if steps >= limit:
+                    break
+                steps += 1
                 text, calls = [], []
                 messages = [{"role": "system", "content": self.system_prompt()}, *self.history]
                 async for event in self.llm.stream(messages, self.tools.schemas()):
@@ -86,10 +94,13 @@ class Agent:
                     )
                     yield ToolFinished(call, result)
 
-            yield StepLimitReached(self.max_steps)
+            yield StepLimitReached(steps)
         except BaseException:
             del self.history[turn_start:]
             raise
+
+    def _step_limit(self) -> int:
+        return self.max_steps() if callable(self.max_steps) else self.max_steps
 
     async def _execute(self, call: ToolCall) -> str:
         # A broken tool must not end the turn: report the error to the model and let it recover.

@@ -13,11 +13,30 @@ def test_version():
     assert __version__ in result.output
 
 
-@pytest.mark.parametrize("args", [["run"], ["tasks"]])
-def test_unbuilt_commands_exit_nonzero(args: list[str]):
-    result = runner.invoke(app, args)
-    assert result.exit_code == 1
-    assert "Not built yet" in result.output
+def test_tasks_lists_stored_checklists(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    import asyncio
+    from datetime import UTC, datetime
+
+    from noah.tasks.store import TaskStore
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    result = runner.invoke(app, ["tasks"])
+    assert result.exit_code == 0
+    assert "No checklists yet." in result.output
+
+    async def seed() -> None:
+        store = TaskStore(tmp_path / "noah" / "noah.db")
+        task = await store.create("Set up demo", ["mkdir", "git init"], datetime.now(UTC))
+        await store.set_item(task.id, 1, "done", None, datetime.now(UTC))
+        await store.close()
+
+    asyncio.run(seed())
+    result = runner.invoke(app, ["tasks"])
+    assert result.exit_code == 0
+    assert "#1 Set up demo  running 1/2" in result.output
+    assert "✓ 1. mkdir" in result.output
+    assert "○ 2. git init" in result.output
 
 
 def test_doctor_reports_missing_api_key(monkeypatch: pytest.MonkeyPatch, tmp_path):

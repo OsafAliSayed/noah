@@ -6,23 +6,18 @@ from collections.abc import Callable
 
 import typer
 
-from noah.agent.llm import LLM, LLMError, OpenRouterLLM, TextDelta
+from noah.agent.llm import LLMError, TextDelta
 from noah.agent.loop import Agent, AgentEvent, StepLimitReached, ToolFinished, ToolStarted
-from noah.agent.prompts import current_system_prompt
-from noah.config import Settings
-from noah.tools import default_tools
-from noah.tools.registry import ToolRegistry
-from noah.tools.safety import AuditLog, Confirm
+from noah.session import Noah
+from noah.tasks.models import Task
+from noah.tools.checklist import CHECKLIST_TOOLS
+from noah.tools.safety import Confirm
 
 Write = Callable[[str], None]
 
 PROMPT = "you> "
 RESULT_PREVIEW_CHARS = 200
 HELP = "Type a request. /reset clears the conversation, /exit quits (or Ctrl-D)."
-
-
-class MissingAPIKey(Exception):
-    pass
 
 
 def write_stdout(text: str) -> None:
@@ -50,30 +45,6 @@ def terminal_confirm(
     return confirm
 
 
-def build_agent(
-    settings: Settings, llm: LLM | None = None, confirm: Confirm | None = None
-) -> Agent:
-    if llm is None:
-        if settings.openrouter_api_key is None:
-            raise MissingAPIKey
-        llm = OpenRouterLLM(
-            api_key=settings.openrouter_api_key.get_secret_value(),
-            model=settings.llm.model,
-            base_url=settings.llm.base_url,
-        )
-    tools = ToolRegistry(
-        default_tools(),
-        confirm=confirm or terminal_confirm(),
-        audit=AuditLog(settings.state_dir / "actions.log"),
-    )
-    return Agent(
-        llm=llm,
-        tools=tools,
-        system_prompt=current_system_prompt,
-        max_steps=settings.llm.max_steps,
-    )
-
-
 def _dim(text: str) -> str:
     return typer.style(text, dim=True)
 
@@ -83,8 +54,10 @@ def _preview(text: str) -> str:
     return text if len(text) <= RESULT_PREVIEW_CHARS else text[:RESULT_PREVIEW_CHARS] + "…"
 
 
-class _Renderer:
-    """Prints agent events, keeping tool lines on their own lines between streamed text."""
+class Renderer:
+    """Prints agent events and progress announcements, keeping tool and progress lines on
+    their own lines between streamed text. Checklist tool calls aren't shown: the
+    announcements say the same thing in words."""
 
     def __init__(self, write: Write) -> None:
         self.write = write
@@ -96,17 +69,26 @@ class _Renderer:
         self.write(text + "\n")
         self.at_line_start = True
 
+    def announce(self, line: str) -> None:
+        self._line(typer.style(f"  ● {line}", fg="cyan"))
+
     def show(self, event: AgentEvent) -> None:
         match event:
             case TextDelta(text=text):
-                self.write(text)
-                self.at_line_start = text.endswith("\n")
-            case ToolStarted(call=call):
+                if self.at_line_start:
+                    text = text.lstrip("\n")
+                if text:
+                    self.write(text)
+                    self.at_line_start = text.endswith("\n")
+            case ToolStarted(call=call) if call.name not in CHECKLIST_TOOLS:
                 self._line(_dim(f"  ↳ {call.name}({call.arguments})"))
-            case ToolFinished(result=result):
-                self._line(_dim(f"    {_preview(result)}"))
+            case ToolFinished(call=call, result=result):
+                if call.name not in CHECKLIST_TOOLS or result.startswith("Error"):
+                    self._line(_dim(f"    {_preview(result)}"))
             case StepLimitReached(max_steps=n):
                 self._line(typer.style(f"Stopped after {n} steps without an answer.", fg="yellow"))
+            case _:
+                pass
 
     def finish(self) -> None:
         if not self.at_line_start:
@@ -114,22 +96,39 @@ class _Renderer:
         self.at_line_start = True
 
 
-async def run_turn(agent: Agent, text: str, write: Write = write_stdout) -> bool:
+async def run_turn(agent: Agent, text: str, renderer: Renderer, noah: Noah | None = None) -> bool:
     """Run one user turn and print it. Returns False if the model couldn't be reached."""
-    renderer = _Renderer(write)
     try:
         async for event in agent.run(text):
             renderer.show(event)
     except LLMError as e:
         renderer.finish()
-        write(typer.style(f"✗ {e}", fg="red") + "\n")
+        renderer.write(typer.style(f"✗ {e}", fg="red") + "\n")
         return False
+    finally:
+        if noah:
+            noah.announcer.flush()
     renderer.finish()
     return True
 
 
-async def repl(agent: Agent, read_line: Callable[[str], str] = input, write: Write = write_stdout):
+def unfinished_summary(tasks: list[Task]) -> str | None:
+    if not tasks:
+        return None
+    names = ", ".join(f"{t.title} ({t.done_count}/{len(t.items)})" for t in tasks)
+    noun = "checklist" if len(tasks) == 1 else "checklists"
+    return f"Unfinished {noun} from before: {names}. Ask to continue or cancel."
+
+
+async def repl(
+    noah: Noah,
+    renderer: Renderer,
+    read_line: Callable[[str], str] = input,
+) -> None:
+    write = renderer.write
     write(_dim(HELP) + "\n")
+    if summary := unfinished_summary(noah.tasks.open_tasks()):
+        write(_dim(summary) + "\n")
     while True:
         try:
             line = (await asyncio.to_thread(read_line, PROMPT)).strip()
@@ -141,8 +140,9 @@ async def repl(agent: Agent, read_line: Callable[[str], str] = input, write: Wri
         if line in ("/exit", "/quit"):
             return
         if line == "/reset":
-            agent.reset()
+            noah.agent.reset()
             write(_dim("Conversation cleared.") + "\n")
             continue
         write("noah> ")
-        await run_turn(agent, line, write)
+        renderer.at_line_start = False
+        await run_turn(noah.agent, line, renderer, noah)

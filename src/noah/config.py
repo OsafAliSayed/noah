@@ -29,10 +29,13 @@ class LLMSettings(_Section):
     # Placeholder until M4 picks a default by benchmark. OpenRouter's auto router picks per request.
     model: str = "openrouter/auto"
     max_steps: int = Field(default=8, ge=1)
+    # A checklist needs two update_item calls per step on top of the work itself.
+    max_steps_with_checklist: int = Field(default=40, ge=1)
 
 
 class TasksSettings(_Section):
     verbosity: Literal["quiet", "normal", "chatty"] = "normal"
+    notifications: bool = True
 
 
 class Settings(_Section):

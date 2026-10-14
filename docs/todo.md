@@ -2,7 +2,7 @@
 
 Where the build stands, and what to do next. Read this first when picking the project up in a new session, after `CLAUDE.md`, [architecture.md](architecture.md) and [build-plan.md](build-plan.md).
 
-Last updated: 2026-10-14, at the end of M2.
+Last updated: 2026-10-14, at the end of M3.
 
 ## Status
 
@@ -10,9 +10,9 @@ Last updated: 2026-10-14, at the end of M2.
 |---|---|---|
 | M0 Project skeleton | Done, merged | `m0-skeleton` |
 | M1 Agent loop (text) | Done, merged | `m1-agent-loop` |
-| M2 Tools and safety | Done, **waiting for the user to commit and merge** | `m2-tools-safety` |
-| M3 Checklists and progress updates | **Next** | `m3-checklists` (to create from `main` after M2 merges) |
-| M4 Pick the default model | Not started | |
+| M2 Tools and safety | Done, merged | `m2-tools-safety` |
+| M3 Checklists and progress updates | Done, committed on its branch | `m3-checklists` |
+| M4 Pick the default model | **Next** | `m4-model-choice` (stacked on `m3-checklists`) |
 | M5 Noah speaks | Not started | |
 | M6 Noah listens (push-to-talk) | Not started | |
 | M7 Hands-free | Not started | |
@@ -60,61 +60,16 @@ These aren't spelled out in `architecture.md`:
 - [ ] **`architecture.md` still has the old text sketch.** The proper diagrams are in a separate page (https://claude.ai/artifact/RScKGkpPUc6rnBrfwf49ZN). Updating that page needs it read first from the new session, because it was published from this one. Maybe add Mermaid versions to the docs later.
 - [ ] **Starter tools from `architecture.md` not built yet:** `media_control`, `set_brightness`, clipboard, windows, `screenshot`, `web_search`, and writing or moving files. These are planned for M8. Writing and moving files should be `confirm`.
 
-## M3: Checklists and progress updates (next)
+## M3: what was built
 
-Goal and "done when" are in `build-plan.md`. The detailed design is in `architecture.md` section 8. Implementation notes:
+- `tasks/models.py`, `store.py`, `manager.py`, `announcer.py`, `notifier.py`, and `tools/checklist.py` (`create_checklist`, `update_item`, `add_items`, `get_tasks`, `cancel_task`).
+- Item ids the model sees are the 1-based item numbers within a task, not database ids.
+- `session.py:start()` wires everything; `noah chat` and `noah say` use it.
+- The step limit is a callable: `max_steps` (8) normally, `max_steps_with_checklist` (40) while a checklist is open. It only ever rises within a turn, so finishing the checklist doesn't cut off the summary.
+- Confirmation inside a checklist: `TaskManager.gate` marks the in-progress item `waiting` (with `asking=True`, so the announcer flushes grouped progress but doesn't add its own line), asks, then sets it back to `in_progress`.
+- Checklist tool calls are hidden in `noah chat`; the cyan `●` announcer lines replace them.
+- Live check passed: "make a folder called test-noah in codes, put a README in it, and init git" made a 3-step checklist, asked before each shell command, announced progress, notified, and `noah tasks` shows it after restart.
 
-### Files to add
+## M4 (next)
 
-- `src/noah/tasks/models.py`: `Task` (id, title, status, created and updated times) and `Item` (id, task_id, position, text, status, note). Status is one of `pending | in_progress | done | failed | waiting | skipped`. A task's status is derived from its items: running, done, failed or waiting.
-- `src/noah/tasks/store.py`: SQLite at `settings.data_dir / "noah.db"`, using `aiosqlite`, which needs adding with `uv add aiosqlite`. Create tables on first use. Keep the schema small and versioned with `PRAGMA user_version`.
-- `src/noah/tasks/manager.py`: `create`, `update_item`, `add_items` and `get_tasks`. Every status change emits an event to subscribers through a callback list or an `asyncio.Queue`.
-- `src/noah/tools/checklist.py`: the agent-facing tools `create_checklist(title, items)`, `update_item(task_id, item_id, status, note?)`, `add_items(task_id, items)` and `get_tasks(status?)`. All are `safe`. They need the manager, so build them with a factory, e.g. `checklist_tools(manager) -> list[Tool]`, and add them in `chat.build_agent`. Keep `default_tools()` stateless.
-- `src/noah/tasks/announcer.py`: turns events into short lines from templates (see the table in `architecture.md` §8), without an extra LLM call.
-  - Groups items that finish within a few seconds of each other.
-  - Applies `settings.tasks.verbosity` (`quiet | normal | chatty`).
-  - Prints lines in `noah chat`, without breaking the streamed output (see `_Renderer`).
-  - Sends a desktop notification per task, updated in place.
-
-### Notifications that update in place
-
-The laptop runs Ubuntu 22.04's libnotify 0.7.9. Its `notify-send` has no `--replace-id` (that arrived in 0.8), so use `gdbus`, which is installed:
-
-```bash
-gdbus call --session --dest org.freedesktop.Notifications \
-  --object-path /org/freedesktop/Notifications \
-  --method org.freedesktop.Notifications.Notify \
-  "Noah" <replaces_id> "" "<title>" "<body>" "[]" "{}" 5000
-# prints "(uint32 42,)": keep 42 and pass it as replaces_id next time
-```
-
-### Agent changes
-
-- **Planning rule in the system prompt** (`agent/prompts.py`): for any request with more than one step, call `create_checklist` first, then `update_item` as each step starts and finishes.
-- **Step limit:** a checklist task needs more model calls than the current limit of 8. The plan is to raise the limit while a checklist is active, e.g. a `max_steps_with_checklist` setting (`architecture.md` §5).
-- **Open checklists:** include them in the system prompt context, so "what's left?" works.
-
-### CLI and tests
-
-- **`noah tasks`:** replace the stub in `cli.py`. It prints current and recent checklists, with each item's status.
-- **Background running:** in M3, a checklist runs inside the chat turn. Running in the background, so you can keep talking while it runs, is M8 (`build-plan.md`). Keep the manager's event design ready for it, but don't build the background runner yet.
-- **Tests:**
-  - Store round-trips, using a `tmp_path` database.
-  - Status rules for items and tasks.
-  - Announcer templates, grouping and verbosity, with a fake clock.
-  - Checklist tools going through `ToolRegistry`.
-  - A loop test using `FakeLLM` that scripts create → update → update → final text.
-
-### Done when (from `build-plan.md`)
-
-"Make a folder called test-noah in codes, put a README in it, and init git" should:
-- produce a checklist,
-- print and notify after each step,
-- pause for confirmation where needed,
-- finish with a summary.
-
-The checklist must still be there after restarting Noah (`noah tasks`).
-
-## After M3
-
-M4 comes next: write `scripts/eval_models.py` and benchmark 3–4 OpenRouter models on about 25 real commands (single-step, multi-step and should-refuse). Score each on the right tool and arguments, checklist quality, refusals, time to first token and cost.
+ write `scripts/eval_models.py` and benchmark 3–4 OpenRouter models on about 25 real commands (single-step, multi-step and should-refuse). Score each on the right tool and arguments, checklist quality, refusals, time to first token and cost.

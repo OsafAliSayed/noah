@@ -31,7 +31,9 @@ All four (format, lint, pyright, pytest) should pass before a milestone is done.
 - A tool is a typed function wrapped in `@tool(risk=...)`; the pydantic model built from its signature gives both the JSON Schema and argument validation. Describe parameters with `Annotated[T, Field(description=...)]`. `risk` is `"safe" | "confirm" | "deny"` or a function of the validated args returning an `Assessment` (see `tools/shell.py`, `tools/files.py`). Register new tools in `tools/__init__.py:default_tools`.
 - Tools raise `ToolError` for expected failures (message goes to the model verbatim). System commands go through `tools/_proc.py` (`run` waits, `launch` detaches for apps), which turns a missing binary into an apt hint. Tests monkeypatch `_proc.run` / `_proc.launch`.
 - Shell policy lives in `tools/safety.py:assess_shell`: deny patterns first, then anything with shell operators or secret paths needs confirmation, and only a small read-only allowlist runs without asking.
-- `chat.py` renders events for `noah chat` / `noah say`. The voice daemon will consume the same events.
+- `session.py:start()` builds a running Noah (agent, registry, `TaskManager`, `Announcer`) and loads unfinished checklists. `noah chat`, `noah say` and the voice daemon all start there; they differ only in the `confirm` and `say` callbacks.
+- Checklists (`tasks/`): `TaskStore` (SQLite, `PRAGMA user_version` migrations) → `TaskManager` (keeps open tasks in memory, emits `TaskEvent`s to async subscribers, `gate(confirm)` marks the active item `waiting` while asking) → `Announcer` (template lines, grouping, verbosity, `GdbusNotifier`). The agent's checklist tools are built per manager in `tools/checklist.py`; `default_tools()` stays stateless.
+- `chat.py:Renderer` prints events and announcer lines for `noah chat` / `noah say`, hiding checklist tool calls.
 - Tests use `tests/fakes.py`: `FakeLLM` replays scripted responses and records what it was sent; `FakeTools` records executions.
 
 ## Conventions
